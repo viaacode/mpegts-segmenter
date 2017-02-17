@@ -18,7 +18,7 @@ describe TSStream do
     before :each do
         allow(Process).to receive(:wait)
         expect(IO).to receive(:popen)
-        .with(/.*ffmpeg -y -i browse.ts -c copy -f mpegts pipe:1 <\/dev\/null 2>>.*/) {
+        .with(/.*ffmpeg -y -i \/browse.mp4 -c copy -f mpegts pipe:1 <\/dev\/null 2>>.*/) {
             ts_stream
         }
     end
@@ -27,9 +27,13 @@ describe TSStream do
         before :each do
             @sizes = []
             @stream = []
+            @ids = []
+            @names = []
             while subject.nextchunk do
-                @stream << subject.data
-                @sizes << subject.data.length
+                @stream << subject.chunk_payload
+                @sizes << subject.chunk_payload.length
+                @ids << subject.chunk_id
+                @names << subject.chunk_name
             end
         end
 
@@ -45,10 +49,17 @@ describe TSStream do
             rac = @stream.drop(1).map {|x| TSPacket.new(x).rac?}
             expect(rac.select { |x| x != true } ).to be_empty
         end
+
+        it 'chunk_ids rise monotonically' do
+            expect(@ids).to eq Array(0..3)
+        end
+        it 'set the correct name for every chunk' do
+            expect(@names).to eq Array(0..3).map {|x| "browse.ts.#{x}"}
+        end
     end
 
     context 'with a defined playlist' do
-        subject { TSStream.new('browse.ts',@exp_playlist) }
+        subject { TSStream.new('/browse.mp4',@exp_playlist) }
         it_behaves_like 'segmented mpegts stream' 
     end
 
@@ -56,7 +67,7 @@ describe TSStream do
         before :all do
             @ts = TsProperties.new
         end
-        subject { TSStream.new('browse.ts') }
+        subject { TSStream.new('/browse.mp4') }
 
         it_behaves_like 'segmented mpegts stream' 
 

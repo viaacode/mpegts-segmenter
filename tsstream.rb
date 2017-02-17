@@ -30,13 +30,13 @@ class TSStream
     # desired size of the remaining chunks
     CHUNK_SIZE_TARGET = CHUNK_SEGMENTS * FRAG_SIZE_TARGET
 
-    attr_reader :time, :pos, :data, :playlist, :chunk
+    attr_reader :time, :pos, :chunk_payload, :playlist, :chunk_id
 
     def initialize(name,playlist=nil)
         @name = name.sub(/.*\/(\w*\.)\w*$/, '\1ts')
         @pipe = IO.popen("#{FFMPEGCMD} -y -i #{name} -c copy -f mpegts pipe:1 </dev/null 2>>log/ffmpeg.log")
-        @chunkbuffer = ''
-        @chunk = -1
+        @chunk_buffer = ''
+        @chunk_id = -1
         case playlist
         when nil
             initm3u8
@@ -63,6 +63,10 @@ class TSStream
         nextchunksize  # goto the start of first chunk
     end
 
+    def chunk_name
+        "#{@name}.#{@chunk_id}"
+    end
+
     def nextchunksize
         bytes = @carry
         @carry = 0 
@@ -72,41 +76,40 @@ class TSStream
             bytes += $1.to_i
         end
         @carry = $1.to_i if line
-        #@chunk += 1
         bytes
     end
 
     def nextchunk
-        @chunk += 1
+        @chunk_id += 1
         case @pos   # are we generating a playlist
         when nil
-            @data = @pipe.read(nextchunksize)
+            @chunk_payload = @pipe.read(nextchunksize)
         else
-            @chunkpos = 0
-            @chunkoffset = @pos
-            maxchunksize = @chunk == 0 ? FIRSTCHUNK_SIZE_TARGET : CHUNK_SIZE_TARGET
-            while @chunkpos < maxchunksize && read_next_segment do
+            @chunk_pos = 0
+            @chunk_offset = @pos
+            maxchunksize = @chunk_id == 0 ? FIRSTCHUNK_SIZE_TARGET : CHUNK_SIZE_TARGET
+            while @chunk_pos < maxchunksize && read_next_segment do
                 add_segment_to_playlist
-                @chunkpos = @pos - @chunkoffset
+                @chunk_pos = @pos - @chunk_offset
             end
-            @playlist = header + @playlistbody + footer if @chunkpos < maxchunksize
-            @data = @chunkbuffer
-            @chunkbuffer = ''
+            @playlist = header + @playlistbody + footer if @chunk_pos < maxchunksize
+            @chunk_payload = @chunk_buffer
+            @chunk_buffer = ''
         end
-        if @data.length == 0
+        if @chunk_payload.length == 0
             Process.wait(@pipe.pid)
             return nil
         end
-        @data
+        @chunk_payload
     end
 
     private
     def set_time_to_last_pes_packet
         timestamps = []
-        ptr = @chunkbuffer.length - TS_PKT_SZ
+        ptr = @chunk_buffer.length - TS_PKT_SZ
         packet = nil
         until packet&.video_pes? || ptr < 0
-            packet = TSPacket.new(@chunkbuffer[ptr, TS_PKT_SZ])
+            packet = TSPacket.new(@chunk_buffer[ptr, TS_PKT_SZ])
             timestamps << packet.pts_time if packet.pes_start?
             ptr -= TS_PKT_SZ
         end
@@ -116,7 +119,7 @@ class TSStream
     def read_next_packet
         rawpacket = @pipe.read(TS_PKT_SZ)
         return nil unless rawpacket
-        @chunkbuffer << @cursor
+        @chunk_buffer << @cursor
         @cursor = rawpacket
         TSPacket.new(rawpacket)
     end
@@ -137,9 +140,9 @@ class TSStream
         # update the max fragment time if fragment longer than current maximum
         @targetduration = time_delta if time_delta > @targetduration
         @playlistbody+= "\n#EXTINF:#{time_delta.round(2)},\n"
-        suffix = @chunkpos == 0 ? '@0' : ''
+        suffix = @chunk_pos == 0 ? '@0' : ''
         @playlistbody += "#EXT-X-BYTERANGE:#{pos_delta}#{suffix}\n" 
-        @playlistbody += "#{@name}.#{@chunk}\n"
+        @playlistbody += "#{chunk_name}\n"
         @segmentpos = @pos
         @segmenttime = @time
     end
@@ -147,7 +150,7 @@ class TSStream
     def read_next_segment
         chunk = @pipe.read(FRAG_SIZE_TARGET)
         return nil unless chunk 
-        @chunkbuffer << @cursor << chunk
+        @chunk_buffer << @cursor << chunk
         @pos += @cursor.length + chunk.length
         @cursor = ''
         read_til_next_rac_packet || set_time_to_last_pes_packet

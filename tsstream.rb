@@ -35,6 +35,7 @@ class TSStream
     def initialize(name,playlist=nil)
         @name = name.sub(/.*\/(\w*\.)\w*$/, '\1ts')
         @pipe = IO.popen("#{FFMPEGCMD} -y -i #{name} -c copy -f mpegts pipe:1 </dev/null 2>>log/ffmpeg.log")
+        Process.detach @pipe.pid
         @chunk_buffer = ''
         @chunk_id = -1
         case playlist
@@ -97,10 +98,14 @@ class TSStream
             @chunk_buffer = ''
         end
         if @chunk_payload.length == 0
-            Process.wait(@pipe.pid)
+            #Process.wait(@pipe.pid)
             return nil
         end
         @chunk_payload
+    rescue => e
+        puts e
+        puts e.backtrace
+        raise e
     end
 
     private
@@ -131,7 +136,7 @@ class TSStream
             packet = read_next_packet
             break unless packet
         end
-        @time = packet.pts_time
+        @time = packet&.pts_time
     end
 
     def add_segment_to_playlist

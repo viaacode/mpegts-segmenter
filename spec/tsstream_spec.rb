@@ -16,6 +16,7 @@ describe TSStream do
     end
 
     before :each do
+        allow(Process).to receive(:detach)
         allow(Process).to receive(:wait)
         expect(IO).to receive(:popen)
         .with(/.*ffmpeg -y -i \/browse.mp4 -c copy -f mpegts pipe:1 <\/dev\/null 2>>.*/) {
